@@ -1565,6 +1565,7 @@ class WebChannel(ChatChannel):
                 ("telegram", "Telegram"),
                 ("slack", "Slack"),
                 ("discord", "Discord"),
+                ("whatsapp", "WhatsApp"),
             ]
             en_channels = [
                 ("web", "Web"),
@@ -1572,6 +1573,7 @@ class WebChannel(ChatChannel):
                 ("telegram", "Telegram"),
                 ("slack", "Slack"),
                 ("discord", "Discord"),
+                ("whatsapp", "WhatsApp"),
                 ("weixin", "WeChat"),
                 ("feishu", "Feishu"),
                 ("dingtalk", "DingTalk"),

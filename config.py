@@ -231,6 +231,18 @@ available_setting = {
     # Discord config (Gateway connection, no public IP required)
     "discord_token": "",  # Discord Bot Token (generated on the Bot page of the Developer Portal)
     "discord_group_trigger": "mention_or_reply",  # Channel trigger: mention_or_reply(@ or reply to bot, recommended) | mention_only(@ only) | all(every message)
+    # WhatsApp config (Meta WhatsApp Business Cloud API; needs a public HTTPS URL forwarding to whatsapp_port)
+    "whatsapp_access_token": "",  # System User access token with whatsapp_business_messaging (+ whatsapp_business_management for groups)
+    "whatsapp_phone_number_id": "",  # Phone number ID of the business number (WhatsApp Manager / App Dashboard)
+    "whatsapp_app_secret": "",  # Meta App secret; verifies the X-Hub-Signature-256 of every webhook
+    "whatsapp_verify_token": "",  # any string you choose; must match the Verify token set on the webhook
+    "whatsapp_port": 9893,  # local webhook port; serves /whatsapp/webhook
+    "whatsapp_api_version": "v21.0",  # Graph API version
+    "whatsapp_group_trigger": "all",  # Group trigger: all(every message) | prefix(only messages starting with group_chat_prefix)
+    "whatsapp_rate_limit_mps": 20,  # outbound messages per second for the whole number (Meta max 80)
+    "whatsapp_pair_interval_seconds": 6,  # per-recipient pacing: one message per N seconds on average (Meta pair rate limit)
+    "whatsapp_pair_burst": 5,  # per-recipient burst allowance before pacing kicks in
+    "whatsapp_max_wait_seconds": 120,  # longest a single send may wait for the rate limiter before it is abandoned
     # WeChat config
     "weixin_token": "",  # bot_token obtained after WeChat login; leave empty to auto scan-login on startup
     "weixin_base_url": "https://ilinkai.weixin.qq.com",  # Weixin ilink API base URL
@@ -240,7 +252,7 @@ available_setting = {
     # custom trigger words for chatgpt commands
     "clear_memory_commands": ["#清除记忆"],  # session-reset command; must start with #
     # channel config
-    "channel_type": "",  # channel type; supports running multiple channels at once. Single: "feishu", multiple: "feishu, dingtalk" or ["feishu", "dingtalk"]. Options: web,feishu,dingtalk,wecom_bot,weixin,wechatmp,wechatmp_service,wechatcom_app,wechat_kf,telegram,slack,discord
+    "channel_type": "",  # channel type; supports running multiple channels at once. Single: "feishu", multiple: "feishu, dingtalk" or ["feishu", "dingtalk"]. Options: web,feishu,dingtalk,wecom_bot,weixin,wechatmp,wechatmp_service,wechatcom_app,wechat_kf,telegram,slack,discord,whatsapp
     "web_console": True,  # whether to auto-start the Web console (on by default). Set False to disable
     "subscribe_msg": "",  # subscribe message; supported by: wechatmp, wechatmp_service, wechatcom_app
     "debug": False,  # whether to enable debug mode; prints more logs when on

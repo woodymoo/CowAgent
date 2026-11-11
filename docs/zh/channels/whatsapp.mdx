@@ -1,0 +1,325 @@
+---
+title: WhatsApp
+description: "通过 Meta 官方 WhatsApp Business Cloud API 将 CowAgent 接入 WhatsApp 企业号码：配置 Meta 应用与 Business 资料、暴露 Webhook、支持单聊和群聊、管理群组，并内置发送限速防封。"
+---
+
+> 通过 Meta 官方的 **WhatsApp Business Cloud API** 接入 CowAgent。Agent 以你的**企业号码**身份、使用该号码的 WhatsApp Business 资料收发消息。全程走 Meta 的 HTTP API，不控制浏览器，也不模拟 WhatsApp Web，因此账号不会被识别为非官方客户端。
+
+## 快速上手（测试号码，约 15 分钟）
+
+只想先跑通的话，按下面 6 步走，细节见后文对应章节：
+
+1. 在 Meta for Developers 创建应用，选 **"Connect with customers through WhatsApp"**（§3.1）。
+2. 在 **API Setup** 拿到测试号码的 **Phone number ID** 和临时 **Access token**，把自己的手机号加入收件人列表，发一条 hello_world 并在手机上回复它（§3.2）。
+3. 在 **App settings → Basic** 复制 **App secret**，再自己随便定一个 **Verify token**（§3.4、§3.5）。
+4. 用 cloudflared 暴露本地端口：`cloudflared tunnel --url http://localhost:9893`（§5）。
+5. 运行 `./run.sh`（Windows 用 `scripts/run.ps1`），在通道菜单里选 **WhatsApp**，依次填入 Phone Number ID、Access Token、App Secret、Verify Token，端口直接回车用默认 9893；然后启动 CowAgent（§6.1）。
+6. 在 Meta 的 **WhatsApp → Configuration → Webhook** 填 `https://<cloudflared 地址>/whatsapp/webhook` 和 Verify token，点 **Verify and save**，订阅 **messages**（§6.2）。然后用手机给测试号码发消息即可。
+
+
+#### 临时 Access token 约 24 小时过期，长期使用请换成 System User 永久 token（§3.3）。
+
+
+## 一、工作原理
+
+```
+WhatsApp 用户 ──> Meta Cloud API ──HTTPS webhook──> 你的公网地址 ──> CowAgent :9893 /whatsapp/webhook
+                                                                          │（Agent 回复）
+WhatsApp 用户 <── Meta Cloud API <──── Graph API (graph.facebook.com) <───┘
+```
+
+- **入站**：Meta 把每条消息 POST 到你的 Webhook。CowAgent 校验 Meta 的签名，立即返回 `200`，然后在后台处理消息。
+- **出站**：回复通过 Graph API 发出，并经过限速器控制节奏（见 §七）。
+
+## 二、准备条件
+
+| 项目 | 说明 |
+|---|---|
+| Facebook 账号 | 用于登录 Meta for Developers 和 Meta Business Suite。 |
+| **Meta Business portfolio（商务管理组合）** | 在 business.facebook.com 创建，或在创建应用时创建。 |
+| 企业用的**手机号码** | 必须能接收短信或语音电话，且**不能正在个人版 WhatsApp App 上使用**（需先删除该 WhatsApp 账号），否则无法注册到 Cloud API。 |
+| **公网 HTTPS 地址** | Meta 只调用带有效证书的 HTTPS 地址。测试时用隧道（cloudflared / ngrok）即可（§五）。 |
+| 一部装有 WhatsApp 的手机 | 测试时充当"客户"。 |
+
+<Note>
+  第一轮测试完全可以用 Meta 免费提供的**测试号码**（在 3.2 步获取），正式上线前都不需要自己的号码。
+</Note>
+
+## 三、配置 Meta 应用和 Cloud API
+
+### 3.1 创建应用
+
+1. 打开 **developers.facebook.com → My Apps → Create App**。如有提示，先注册为开发者。
+2. 填写应用名称和联系邮箱。
+3. 用例选择 **"Connect with customers through WhatsApp"** → **Next**。
+4. 选择你的 Business portfolio（或新建一个）→ **Next** → **Create app**。
+
+创建完成后进入 **Customize use case → Connect on WhatsApp → Quickstart**。
+
+### 3.2 获取测试号码并发送第一条消息
+
+1. 点击 **Start using the API**，进入 **API Setup**。
+2. 按提示关联或创建一个 **WhatsApp Business Account（WABA）**。
+3. 点击 **Generate access token**。这个 token 是临时的（约 24 小时），只适合快速测试。
+4. 在 **From** 中选择测试号码，复制它的 **Phone number ID**，这就是测试阶段的 `whatsapp_phone_number_id`。
+5. 在 **To** 中添加你自己的 WhatsApp 号码，并用 Meta 发来的验证码完成验证。应用未发布时，测试号码只能给这个列表里的号码发消息。
+6. 点击 **Send message**，手机上应收到 Meta 的 "hello_world" 模板消息。
+7. 在手机上**回复这条消息**。这会打开 24 小时窗口（见 §八），之后机器人就可以自由回复你。
+
+### 3.3 创建永久 Access token（System User）
+
+临时 token 会过期，CowAgent 需要长期有效的 token：
+
+1. 打开 **business.facebook.com → Business Settings（商务设置）→ Users → System users → Add**，填写名称，角色选 **Admin**。
+2. 选中该 System user → **Assign assets（分配资产）**：
+   - **Apps** → 你的应用 → **Full control (Manage app)**
+   - **WhatsApp accounts** → 你的 WABA → **Full control (Manage WhatsApp Business accounts)**
+3. 点击 **Generate token**，选择你的应用，过期时间如可选则设为 **Never**，并勾选以下权限：
+   - `whatsapp_business_messaging`（收发消息）
+   - `whatsapp_business_management`（群组、Business 资料）
+   - `business_management`
+4. 复制 token，这就是 `whatsapp_access_token`。请像密码一样保管。
+
+### 3.4 获取 App secret
+
+**App Dashboard → App settings → Basic → App secret → Show**，这就是 `whatsapp_app_secret`。CowAgent 用它校验每个 Webhook 请求确实来自 Meta。
+
+### 3.5 设定 Verify token
+
+自己设定一个随机字符串，例如用 `openssl rand -hex 16` 生成，这就是 `whatsapp_verify_token`。在 §六 中需要在 Meta 后台填入同样的值。
+
+## 四、配置正式号码和 WhatsApp Business 资料（上线）
+
+用测试号码测试时可跳过本节。
+
+### 4.1 添加并注册手机号码
+
+1. **App Dashboard → WhatsApp → API Setup → Add phone number**，或 **WhatsApp Manager → Phone numbers → Add phone number**。
+2. 填写 **Business 资料**基本信息：
+   - **Display name（显示名称）**：用户看到的名称。Meta 会按显示名称规范审核，名称应与你的企业或品牌一致；与业务无关的名称，或非个人品牌使用个人姓名，都会被拒。
+   - **Category（类别）**和可选的描述。
+3. 通过短信或语音验证码验证号码。
+4. 将号码**注册**到 Cloud API。这一步只能通过 API 完成，执行一次即可：
+
+   ```bash
+   curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/register" \
+     -H "Authorization: Bearer <ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"messaging_product": "whatsapp", "pin": "123456"}'
+   ```
+
+   `pin` 会成为该号码的 6 位两步验证 PIN。如果已开启两步验证，请使用现有 PIN。成功返回 `{"success": true}`。
+5. 使用该号码的 **Phone number ID** 作为 `whatsapp_phone_number_id`。
+
+### 4.2 完善 Business 资料
+
+在 **WhatsApp Manager → Phone numbers →（你的号码）→ Profile** 中设置头像、**About**（最多 139 字符）、**Description**（最多 512 字符）、地址、邮箱、网站（最多 2 个）和类别。也可以通过 API 设置：
+
+```bash
+curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/whatsapp_business_profile" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
+  -d '{"messaging_product":"whatsapp","about":"AI assistant","description":"We answer questions 24/7","email":"support@example.com","websites":["https://example.com"],"vertical":"PROF_SERVICES"}'
+```
+
+### 4.3 企业验证和发送额度
+
+- 完成 **Business verification（企业验证）**（Business Settings → Security Center）。未验证时，新号码的发送额度很低。
+- 在 WhatsApp Manager 中关注号码的 **quality rating（质量评级）**。用户屏蔽或举报会拉低评级，这才是导致号码受限的主要原因。
+- **群组功能**（§八）还需要 **Official Business Account（OBA，官方企业账号，绿色徽章）**，在 WhatsApp Manager 中申请。
+
+## 五、通过 HTTPS 暴露 Webhook
+
+CowAgent 监听 `http://0.0.0.0:9893/whatsapp/webhook`（端口由 `whatsapp_port` 设置）。Meta 需要一个能转发到这里的公网 **HTTPS** 地址。
+
+<Tabs>
+  <Tab title="测试：Cloudflare Tunnel">
+    ```bash
+    cloudflared tunnel --url http://localhost:9893
+    # 输出 https://<random>.trycloudflare.com
+    ```
+    回调地址：`https://<random>.trycloudflare.com/whatsapp/webhook`。每次运行地址都会变，需要在 Meta 后台同步更新。
+  </Tab>
+  <Tab title="测试：ngrok">
+    ```bash
+    ngrok http 9893
+    ```
+    回调地址：`https://<id>.ngrok-free.app/whatsapp/webhook`
+  </Tab>
+  <Tab title="生产：Nginx">
+    ```nginx
+    server {
+        listen 443 ssl;
+        server_name bot.example.com;
+        # 证书，例如通过 Let's Encrypt (certbot) 申请
+        ssl_certificate     /etc/letsencrypt/live/bot.example.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/bot.example.com/privkey.pem;
+
+        location /whatsapp/webhook {
+            proxy_pass http://127.0.0.1:9893;
+            proxy_set_header Host $host;
+        }
+    }
+    ```
+    回调地址：`https://bot.example.com/whatsapp/webhook`
+  </Tab>
+</Tabs>
+
+## 六、配置 CowAgent 并连接 Webhook
+
+### 6.1 配置 CowAgent
+
+<Tabs>
+  <Tab title="安装脚本">
+    运行 `./run.sh`（Windows 用 `scripts/run.ps1`），在通道菜单中选择 **WhatsApp**，依次输入 Phone Number ID、Access Token、App Secret、Verify Token 和端口（回车使用默认 9893），脚本会写入 `config.json`。
+  </Tab>
+  <Tab title="Web 控制台">
+    打开 Web 控制台 → **通道** → **添加通道** → **WhatsApp**，填写 Phone Number ID、Access Token、App Secret、Verify Token 和端口，然后连接。
+  </Tab>
+  <Tab title="配置文件">
+    ```json
+    {
+      "channel_type": "whatsapp",
+      "whatsapp_phone_number_id": "123456789012345",
+      "whatsapp_access_token": "EAAG...",
+      "whatsapp_app_secret": "your-app-secret",
+      "whatsapp_verify_token": "your-random-verify-token",
+      "whatsapp_port": 9893
+    }
+    ```
+  </Tab>
+  <Tab title="环境变量">
+    不想把密钥写进 `config.json` 时，可以用环境变量设置（配置项名大写）：
+    ```bash
+    export WHATSAPP_ACCESS_TOKEN="EAAG..."
+    export WHATSAPP_APP_SECRET="your-app-secret"
+    export WHATSAPP_VERIFY_TOKEN="your-random-verify-token"
+    ```
+  </Tab>
+</Tabs>
+
+启动 CowAgent，成功时日志显示：
+
+```
+[WhatsApp] ✅ webhook listening on http://0.0.0.0:9893/whatsapp/webhook (phone_number_id=...)
+```
+
+如果缺少必填配置或端口被占用，启动会失败并输出 `[WhatsApp] missing required config: ...` 或 `[WhatsApp] startup failed: ...`。
+
+### 6.2 在 Meta 后台连接 Webhook
+
+此步骤中 Meta 会回调 CowAgent，所以 CowAgent 必须处于运行状态。
+
+1. **App Dashboard → WhatsApp → Configuration → Webhook → Edit**。
+2. **Callback URL**：`https://<你的域名>/whatsapp/webhook`
+3. **Verify token**：与 `whatsapp_verify_token` 完全一致。
+4. 点击 **Verify and save**。Meta 发送 GET 握手请求，CowAgent 返回 challenge。
+5. 在 **Webhook fields → Manage** 中订阅 **messages**。如需使用群组，还要订阅 `group_lifecycle_update`、`group_participants_update` 和 `group_settings_update`。
+
+使用正式号码（§四）时，确认应用已订阅该 WABA。如果收不到任何 Webhook，执行：
+
+```bash
+curl -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+## 七、配置项说明
+
+| 配置项 | 说明 | 默认值 |
+| --- | --- | --- |
+| `whatsapp_phone_number_id` | 企业号码的 Phone number ID | - |
+| `whatsapp_access_token` | System User access token | - |
+| `whatsapp_app_secret` | App secret，用于校验 Webhook 签名 | - |
+| `whatsapp_verify_token` | 必须与 Webhook 上设置的 Verify token 一致 | - |
+| `whatsapp_port` | 本地 Webhook 端口（路径 `/whatsapp/webhook`） | `9893` |
+| `whatsapp_api_version` | Graph API 版本 | `v21.0` |
+| `whatsapp_group_trigger` | 群聊触发方式：`all`（回复所有消息）/ `prefix`（只回复以 `group_chat_prefix` 开头的消息，如 `@bot`） | `all` |
+| `whatsapp_rate_limit_mps` | 整个号码每秒出站消息数（Meta 上限 80） | `20` |
+| `whatsapp_pair_interval_seconds` | 单个收件人限速：平均每 N 秒一条 | `6` |
+| `whatsapp_pair_burst` | 单个收件人在限速生效前可连续收到的消息数 | `5` |
+| `whatsapp_max_wait_seconds` | 单次发送等待限速器的最长时间，超过则放弃 | `120` |
+
+## 八、日常使用
+
+### 单聊
+
+用 WhatsApp 给企业号码发消息，Agent 就会回复。支持：
+
+| 你发送 | 处理方式 |
+|---|---|
+| 文本 | 直接回答。长回答会拆成多条消息（单条上限 4096 字符）。 |
+| **带说明文字**的图片 / 文档 / 视频 | 作为一个请求处理（"总结一下"加文件）。 |
+| **不带说明文字**的图片 / 文档 / 视频 | 先暂存，附加到你的**下一条**文本消息上。所以先发文件，再提问。 |
+| 语音 | 先转文字（需在 CowAgent 中配置语音识别服务），再回答。 |
+| 贴纸、位置、表情回应、联系人 | 忽略。 |
+
+Agent 可以回复文本、图片（jpeg/png）、文档（pdf、Office、`.md`/`.csv`/`.json` 等文本类文件）、视频（mp4）和音频（mp3/ogg/aac/amr）。WhatsApp 不接受的文件类型（GIF、ZIP、WAV 等）不会发送，你会收到一条注明文件名的简短提示。
+
+对话命令与其他通道一致，例如 `/cancel` 可停止正在运行的任务。
+
+### 24 小时规则
+
+WhatsApp 只允许企业在**用户最后一条消息后的 24 小时内**发送自由格式消息。超过 24 小时，Meta 会以错误码 `131047` 拒绝发送，CowAgent 日志显示：
+
+```
+[WhatsApp] The 24-hour customer service window is closed (131047) ...
+```
+
+需要预审模板的消息不在本通道支持范围内。实际效果是：Agent 总能回复刚给你发过消息的用户，但**定时任务或主动消息只能送达 24 小时内发过消息的用户**。
+
+### 群组
+
+用自然语言告诉 Agent，它会调用 `whatsapp_group` 工具：
+
+| 对 Agent 说 | 工具动作 |
+|---|---|
+| "创建一个叫 *Launch crew* 的 WhatsApp 群，入群需要我审批" | `create`（`join_approval_mode=approval_required`） |
+| "列出我的 WhatsApp 群" | `list` |
+| "查看群 X 的详情和成员" | `info` |
+| "把群 X 改名为 …" / "把群描述改成 …" | `update` |
+| "给我群 X 的邀请链接" / "作废旧链接" | `get_invite_link` / `reset_invite_link` |
+| "谁在申请加入群 X？" / "都通过" / "拒绝 …" | `list_join_requests` / `approve_join_requests` / `reject_join_requests` |
+| "把 +1555… 移出群 X" | `remove_participants` |
+| "删除群 X" | `delete` |
+
+说明：
+
+- **不能直接拉人进群**。分享邀请链接，对方通过链接加入；如果设置了审批，对方提交入群申请。
+- `create` 之后，Meta 会异步发回群 id 和邀请链接（日志中可见 `[WhatsApp] group event group_lifecycle_update: groups=[...]`）。如果 Agent 没拿到群 id，让它列一下群即可。
+- 企业号码在群里后，群消息会在群内回复。设置 `whatsapp_group_trigger: "prefix"` 时，Agent 只回复以 `group_chat_prefix` 开头的消息（如 `@bot 下一步是什么？`）。
+- 要主动向群发消息（例如定时任务），收件人写 `group:<group_id>`。
+
+### 限速（防封）
+
+每条出站消息都要经过两个令牌桶：
+
+1. **整个号码**：每秒 `whatsapp_rate_limit_mps` 条。
+2. **单个收件人**（用户或群）：先允许连续 `whatsapp_pair_burst` 条，之后每 `whatsapp_pair_interval_seconds` 秒一条。这对应 Meta 对同一用户约每 6 秒一条的 pair rate limit。
+
+消息只会被延迟，不会被丢弃。如果 Meta 仍然限流（`130429` 吞吐量、`131056` pair rate、`80007` 账号速率），会以指数退避重试，最多 3 次。收到 `131056` 后，该收件人的令牌桶会被清空，重试会等待一个完整间隔。`131048`（垃圾消息限制）和 `131047`（窗口已关闭）**永不重试**，因为重试只会让质量评级更差。
+
+<Warning>
+  限速能让你保持在 Meta 公布的限额内，但号码受限主要取决于**质量评级**：也就是用户是否屏蔽或举报你。只给期待收到你消息的人发消息，不要用这个号码群发未经请求的消息。
+</Warning>
+
+## 九、平台限制
+
+- 自由格式消息受 **24 小时窗口**限制（见上文）。本通道不支持模板消息。
+- **群组 API**：仅限 Official Business Account。每个群最多 **8 名成员**。只能通过邀请链接入群。同时在使用 WhatsApp Business *App* 的号码（coexistence 共存模式）不可用。
+- **每个 CowAgent 进程只能运行一个 WhatsApp 通道**，因为 Webhook 端口是全局的。
+- 号码注册到 Cloud API 后，就不能再在个人版 WhatsApp App 中使用。
+
+## 十、常见问题
+
+| 现象 | 可能原因 / 解决办法 |
+|---|---|
+| Meta 提示 "The callback URL or verify token couldn't be validated" | CowAgent 未运行或该地址无法访问、路径不是 `/whatsapp/webhook`、或 Verify token 不一致。用 `curl "https://<url>/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=<token>&hub.challenge=42"` 检查，应输出 `42`。 |
+| 日志：`webhook rejected: bad or missing X-Hub-Signature-256` | `whatsapp_app_secret` 填错了（从 App settings → Basic 重新复制），或者有非 Meta 的请求在调用该地址。 |
+| Webhook 验证通过，但收不到消息 | Webhook fields 中没有订阅 **messages**；正式号码下应用没有订阅 WABA（`/subscribed_apps`，见 §6.2）；或测试收件人不在允许列表里。 |
+| 日志：`signed webhook payload rejected` | 收到的不是 WhatsApp 的 Webhook（例如其他产品的事件）。无害，已正常应答。 |
+| 能收到消息，但回复失败，报 `190` / `401` | token 已过期或缺少权限。请使用 System User token（§3.3）。 |
+| 日志中出现 `131047` | 24 小时窗口已关闭，需要用户先发消息。 |
+| 日志中出现 `131048` | Meta 判定为疑似垃圾消息发送。放慢速度并检查内容；反复触发可能导致号码受限。 |
+| `130429` / `131056` 警告 | 被限流，会自动重试。如果频繁出现，调低 `whatsapp_rate_limit_mps` 或调高 `whatsapp_pair_interval_seconds`。 |
+| 群组工具返回资格（eligibility）错误 | 号码不是 Official Business Account，或是 coexistence（Business App 共存）号码。 |
+| Agent 没有群组工具可用 | WhatsApp 通道没有运行。该工具只在通道运行时出现。 |
+| `startup failed: ... address already in use` | `whatsapp_port` 被其他进程占用。换一个端口，并同步更新代理或隧道配置。 |

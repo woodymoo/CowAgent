@@ -657,6 +657,7 @@ channel_label() {
         telegram)      printf '%s' "Telegram" ;;
         slack)         printf '%s' "Slack" ;;
         discord)       printf '%s' "Discord" ;;
+        whatsapp)      printf '%s' "WhatsApp" ;;
         skip)          t "⏭  跳过（稍后在 Web 控制台配置）" "⏭  Skip (configure later in the web console)" ;;
     esac
 }
@@ -672,9 +673,9 @@ select_channel() {
     local title sel
     title="$(t "选择接入渠道" "Select Communication Channel")"
     if [ "$UI_LANG" = "en" ]; then
-        CHANNEL_KEYS=(web telegram discord slack weixin feishu dingtalk wecom_bot qq wechatcom_app skip)
+        CHANNEL_KEYS=(web telegram discord slack whatsapp weixin feishu dingtalk wecom_bot qq wechatcom_app skip)
     else
-        CHANNEL_KEYS=(web weixin feishu dingtalk wecom_bot qq wechatcom_app telegram slack discord skip)
+        CHANNEL_KEYS=(web weixin feishu dingtalk wecom_bot qq wechatcom_app telegram slack discord whatsapp skip)
     fi
     local labels=() k
     for k in "${CHANNEL_KEYS[@]}"; do
@@ -794,6 +795,24 @@ configure_channel() {
             DISCORD_TOKEN="$discord_token"
             ACCESS_INFO="$(t "Discord 渠道已配置" "Discord channel configured")"
             ;;
+        whatsapp)
+            # WhatsApp (Meta Cloud API, webhook mode: needs a public HTTPS URL)
+            CHANNEL_TYPE="whatsapp"
+            echo -e "${GREEN}$(t "配置 WhatsApp（Meta Cloud API）" "Configure WhatsApp (Meta Cloud API)")...${NC}"
+            local wa_pnid wa_token wa_secret wa_verify wa_port
+            tty_read wa_pnid "$(t "请输入 Phone Number ID" "Enter Phone Number ID"): "
+            tty_read wa_token "$(t "请输入 Access Token" "Enter Access Token"): "
+            tty_read wa_secret "$(t "请输入 App Secret" "Enter App Secret"): "
+            tty_read wa_verify "$(t "请输入 Verify Token（自定义任意字符串）" "Enter Verify Token (any string you choose)"): "
+            tty_read wa_port "$(t "请输入 Webhook 端口" "Enter webhook port") [$(t "默认" "default"): 9893]: "
+            wa_port=${wa_port:-9893}
+            WHATSAPP_PHONE_NUMBER_ID="$wa_pnid"
+            WHATSAPP_ACCESS_TOKEN="$wa_token"
+            WHATSAPP_APP_SECRET="$wa_secret"
+            WHATSAPP_VERIFY_TOKEN="$wa_verify"
+            WHATSAPP_PORT="$wa_port"
+            ACCESS_INFO="$(t "WhatsApp 渠道已配置，Webhook 地址" "WhatsApp channel configured, webhook") : http://localhost:${wa_port}/whatsapp/webhook $(t "（需通过 HTTPS 公网地址暴露给 Meta）" "(expose it to Meta via a public HTTPS URL)")"
+            ;;
     esac
 }
 
@@ -838,6 +857,11 @@ create_config_file() {
     SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}" \
     SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
     DISCORD_TOKEN="${DISCORD_TOKEN:-}" \
+    WHATSAPP_PHONE_NUMBER_ID="${WHATSAPP_PHONE_NUMBER_ID:-}" \
+    WHATSAPP_ACCESS_TOKEN="${WHATSAPP_ACCESS_TOKEN:-}" \
+    WHATSAPP_APP_SECRET="${WHATSAPP_APP_SECRET:-}" \
+    WHATSAPP_VERIFY_TOKEN="${WHATSAPP_VERIFY_TOKEN:-}" \
+    WHATSAPP_PORT="${WHATSAPP_PORT:-}" \
     COW_LANG="${INSTALL_LANG:-auto}" \
     $PYTHON_CMD -c "
 import json, os
@@ -888,6 +912,7 @@ channel_map = {
     'telegram': {'telegram_token': 'TELEGRAM_TOKEN'},
     'slack': {'slack_bot_token': 'SLACK_BOT_TOKEN', 'slack_app_token': 'SLACK_APP_TOKEN'},
     'discord': {'discord_token': 'DISCORD_TOKEN'},
+    'whatsapp': {'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID', 'whatsapp_access_token': 'WHATSAPP_ACCESS_TOKEN', 'whatsapp_app_secret': 'WHATSAPP_APP_SECRET', 'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN', 'whatsapp_port': ('WHATSAPP_PORT', int)},
 }
 def _to_int(val, default):
     try:
@@ -899,7 +924,7 @@ for key, spec in channel_map.get(ch, {}).items():
     if isinstance(spec, tuple):
         env_name, conv = spec
         # Guard int() against non-numeric input; fall back to a sane port.
-        base[key] = _to_int(e(env_name), 9899 if key == 'web_port' else 9898) if conv is int else conv(e(env_name))
+        base[key] = _to_int(e(env_name), {'web_port': 9899, 'whatsapp_port': 9893}.get(key, 9898)) if conv is int else conv(e(env_name))
     else:
         base[key] = e(spec, '')
 with open('config.json', 'w') as f:

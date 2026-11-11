@@ -134,12 +134,24 @@ class ChannelsHandler:
                 {"key": "discord_token", "label": "Bot Token", "type": "secret"},
             ],
         }),
+        ("whatsapp", {
+            "label": {"zh": "WhatsApp", "en": "WhatsApp"},
+            "icon": "fa-whatsapp",
+            "color": "emerald",
+            "fields": [
+                {"key": "whatsapp_phone_number_id", "label": "Phone Number ID", "type": "text"},
+                {"key": "whatsapp_access_token", "label": "Access Token", "type": "secret"},
+                {"key": "whatsapp_app_secret", "label": "App Secret", "type": "secret"},
+                {"key": "whatsapp_verify_token", "label": "Verify Token", "type": "secret"},
+                {"key": "whatsapp_port", "label": "Port", "type": "number", "default": 9893},
+            ],
+        }),
     ])
 
     # Channels that lead the list in English. Everything defined above them
     # needs a mainland-China account, so an English user scrolling past those
     # to reach Telegram is scrolling past options they cannot use.
-    EN_FIRST_CHANNELS = ("telegram", "discord", "slack")
+    EN_FIRST_CHANNELS = ("telegram", "discord", "slack", "whatsapp")
 
     @classmethod
     def _ordered_channel_defs(cls, lang=None):

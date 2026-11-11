@@ -1,6 +1,6 @@
 ---
 title: 通道概览
-description: "CowAgent 支持的全部消息通道及能力矩阵：对比微信、飞书、钉钉、企业微信、QQ、Telegram、Slack、Discord、公众号和 Web 控制台在图片、文件、语音和群聊上的支持情况，帮助你按场景选择接入方式。"
+description: "CowAgent 支持的全部消息通道及能力矩阵：对比微信、飞书、钉钉、企业微信、QQ、Telegram、Slack、Discord、WhatsApp、公众号和 Web 控制台在图片、文件、语音和群聊上的支持情况，帮助你按场景选择接入方式。"
 ---
 
 CowAgent 支持接入多种聊天通道，启动时通过 `channel_type` 切换。Web 控制台默认开启，可与其他接入通道并行运行。
@@ -23,6 +23,7 @@ CowAgent 支持接入多种聊天通道，启动时通过 `channel_type` 切换�
 | [Telegram](/zh/channels/telegram) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Slack](/zh/channels/slack) | ✅ | ✅ | ✅ | | ✅ |
 | [Discord](/zh/channels/discord) | ✅ | ✅ | ✅ | | ✅ |
+| [WhatsApp](/zh/channels/whatsapp) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 - **图片 / 文件 / 语音**列表示通道支持收发对应消息类型，具体细节详见各通道文档
 - **群聊**列指可识别并响应群消息
@@ -44,3 +45,4 @@ CowAgent 支持接入多种聊天通道，启动时通过 `channel_type` 切换�
 - [Telegram](/zh/channels/telegram) — 海外 IM，5 分钟接入，无需公网 IP
 - [Slack](/zh/channels/slack) — 团队协作 IM，Socket Mode 接入，无需公网 IP
 - [Discord](/zh/channels/discord) — 社区 IM，Gateway 长连接接入，无需公网 IP
+- [WhatsApp](/zh/channels/whatsapp) — Meta 官方 WhatsApp Business Cloud API，需要公网 HTTPS Webhook

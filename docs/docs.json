@@ -243,6 +243,7 @@
                   "channels/telegram",
                   "channels/slack",
                   "channels/discord",
+                  "channels/whatsapp",
                   "channels/weixin",
                   "channels/feishu",
                   "channels/dingtalk",
@@ -533,7 +534,8 @@
                   "zh/channels/wechatmp",
                   "zh/channels/telegram",
                   "zh/channels/slack",
-                  "zh/channels/discord"
+                  "zh/channels/discord",
+                  "zh/channels/whatsapp"
                 ]
               }
             ]

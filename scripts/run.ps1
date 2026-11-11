@@ -609,6 +609,7 @@ function Get-ChannelLabel {
         "telegram"      { return "Telegram" }
         "slack"         { return "Slack" }
         "discord"       { return "Discord" }
+        "whatsapp"      { return "WhatsApp" }
         "skip"          { return (T "⏭  跳过（稍后在 Web 控制台配置）" "⏭  Skip (configure later in the web console)") }
     }
 }
@@ -622,9 +623,9 @@ function Select-Channel {
     Write-Host ""
     $title = T "选择接入渠道" "Select Communication Channel"
     if ($script:UiLang -eq "en") {
-        $script:ChannelKeys = @("web", "telegram", "discord", "slack", "weixin", "feishu", "dingtalk", "wecom_bot", "qq", "wechatcom_app", "skip")
+        $script:ChannelKeys = @("web", "telegram", "discord", "slack", "whatsapp", "weixin", "feishu", "dingtalk", "wecom_bot", "qq", "wechatcom_app", "skip")
     } else {
-        $script:ChannelKeys = @("web", "weixin", "feishu", "dingtalk", "wecom_bot", "qq", "wechatcom_app", "telegram", "slack", "discord", "skip")
+        $script:ChannelKeys = @("web", "weixin", "feishu", "dingtalk", "wecom_bot", "qq", "wechatcom_app", "telegram", "slack", "discord", "whatsapp", "skip")
     }
     $options = @($script:ChannelKeys | ForEach-Object { Get-ChannelLabel $_ })
     $idx = Select-Menu -Title $title -Options $options -Default 1
@@ -708,6 +709,19 @@ function Configure-Channel {
             Write-Cow (T "配置 Discord..." "Configure Discord...")
             $script:ChannelExtra["discord_token"] = Read-Host (T "请输入 Discord Bot Token" "Enter Discord Bot Token")
             $script:AccessInfo = T "Discord 渠道已配置" "Discord channel configured"
+        }
+        "whatsapp" {
+            # WhatsApp (Meta Cloud API, webhook mode: needs a public HTTPS URL)
+            $script:ChannelType = "whatsapp"
+            Write-Cow (T "配置 WhatsApp（Meta Cloud API）..." "Configure WhatsApp (Meta Cloud API)...")
+            $script:ChannelExtra["whatsapp_phone_number_id"] = Read-Host (T "请输入 Phone Number ID" "Enter Phone Number ID")
+            $script:ChannelExtra["whatsapp_access_token"]    = Read-Host (T "请输入 Access Token" "Enter Access Token")
+            $script:ChannelExtra["whatsapp_app_secret"]      = Read-Host (T "请输入 App Secret" "Enter App Secret")
+            $script:ChannelExtra["whatsapp_verify_token"]    = Read-Host (T "请输入 Verify Token（自定义任意字符串）" "Enter Verify Token (any string you choose)")
+            $port = Read-Host ((T "请输入 Webhook 端口" "Enter webhook port") + " [" + (T "默认" "default") + ": 9893]")
+            if (-not ($port -match '^\d+$')) { $port = "9893" }
+            $script:ChannelExtra["whatsapp_port"] = [int]$port
+            $script:AccessInfo = (T "WhatsApp 渠道已配置，Webhook 地址" "WhatsApp channel configured, webhook") + " : http://localhost:$port/whatsapp/webhook " + (T "（需通过 HTTPS 公网地址暴露给 Meta）" "(expose it to Meta via a public HTTPS URL)")
         }
     }
 }
