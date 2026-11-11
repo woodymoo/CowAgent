@@ -1,0 +1,325 @@
+---
+title: WhatsApp
+description: "Connect CowAgent to a WhatsApp business number through Meta's official WhatsApp Business Cloud API: set up the Meta app and Business profile, expose the webhook, chat in private and group conversations, and manage groups, with built-in rate limiting."
+---
+
+> Integrate CowAgent with WhatsApp through the official **Meta WhatsApp Business Cloud API**. The Agent acts as your **business number**, under its WhatsApp Business profile. Everything goes over Meta's HTTP API, with no browser or WhatsApp Web automation, so the account is never flagged as an unofficial client.
+
+## Quick start (test number, about 15 minutes)
+
+To get a first conversation working, follow these 6 steps. Each one links to the section with the details:
+
+1. In Meta for Developers, create an app with the use case **"Connect with customers through WhatsApp"** (§3.1).
+2. In **API Setup**, copy the test number's **Phone number ID** and the temporary **Access token**, add your own phone to the recipient list, send the hello_world message and reply to it from your phone (§3.2).
+3. Copy the **App secret** from **App settings → Basic**, and make up any **Verify token** (§3.4, §3.5).
+4. Expose the local port with cloudflared: `cloudflared tunnel --url http://localhost:9893` (§5).
+5. Run `./run.sh` (on Windows, `scripts/run.ps1`), choose **WhatsApp** in the channel menu, and enter the Phone Number ID, Access Token, App Secret and Verify Token. Press Enter at the port prompt to keep 9893. Then start CowAgent (§6.1).
+6. In Meta, under **WhatsApp → Configuration → Webhook**, enter `https://<cloudflared host>/whatsapp/webhook` and the Verify token, click **Verify and save**, and subscribe to **messages** (§6.2). Now message the test number from your phone.
+
+<Note>
+  The temporary access token expires after about 24 hours. For anything longer, switch to a permanent System User token (§3.3).
+</Note>
+
+## 1. How it works
+
+```
+WhatsApp user ──> Meta Cloud API ──HTTPS webhook──> your public URL ──> CowAgent :9893 /whatsapp/webhook
+                                                                             │ (agent replies)
+WhatsApp user <── Meta Cloud API <──── Graph API (graph.facebook.com) <──────┘
+```
+
+- **Inbound**: Meta POSTs every message to your webhook. CowAgent checks Meta's signature, answers `200` immediately, and processes the message in the background.
+- **Outbound**: replies go to the Graph API, paced by a rate limiter (see §7).
+
+## 2. What you need
+
+| Item | Notes |
+|---|---|
+| A Facebook account | Used to log in to Meta for Developers and Meta Business Suite. |
+| A **Meta Business portfolio** | Created at business.facebook.com, or during app creation. |
+| A **phone number** for the business | Must be able to receive an SMS or voice call. It **must not be active in the personal WhatsApp app** (delete that WhatsApp account first), or the number cannot be registered to the Cloud API. |
+| A **public HTTPS URL** | Meta only calls HTTPS endpoints with a valid certificate. For testing, a tunnel (cloudflared / ngrok) is fine (§5). |
+| A phone with WhatsApp | To act as the "customer" while testing. |
+
+<Note>
+  You can do the whole first round of testing with Meta's free **test phone number**, which you get in step 3.2. You don't need your own number until you go live.
+</Note>
+
+## 3. Set up the Meta app and Cloud API
+
+### 3.1 Create the app
+
+1. Go to **developers.facebook.com → My Apps → Create App**. Register as a developer first if prompted.
+2. Enter an app name and contact email.
+3. Choose the use case **"Connect with customers through WhatsApp"** → **Next**.
+4. Select your business portfolio, or create one → **Next** → **Create app**.
+
+You land on **Customize use case → Connect on WhatsApp → Quickstart**.
+
+### 3.2 Get a test number and send the first message
+
+1. Click **Start using the API** to open **API Setup**.
+2. Connect or create a **WhatsApp Business Account (WABA)** when asked.
+3. Click **Generate access token**. This token is temporary (about 24 h) and is good only for a quick test.
+4. In **From**, pick the test phone number. Copy its **Phone number ID**; this is your `whatsapp_phone_number_id` for testing.
+5. In **To**, add your own WhatsApp number and verify it with the code Meta sends. While the app is unpublished, a test number can only message recipients on this list.
+6. Click **Send message**. You should receive Meta's "hello_world" template on your phone.
+7. **Reply to that message** from your phone. This opens the 24-hour window (see §8) so the bot can answer you freely.
+
+### 3.3 Create a permanent access token (System User)
+
+The temporary token expires. CowAgent needs a long-lived token:
+
+1. Go to **business.facebook.com → Business Settings → Users → System users → Add**. Give it a name and the **Admin** role.
+2. Select the system user → **Assign assets**:
+   - **Apps** → your app → **Full control (Manage app)**
+   - **WhatsApp accounts** → your WABA → **Full control (Manage WhatsApp Business accounts)**
+3. Click **Generate token**, pick your app, set expiration to **Never** if offered, and select these permissions:
+   - `whatsapp_business_messaging` (send and receive)
+   - `whatsapp_business_management` (groups, business profile)
+   - `business_management`
+4. Copy the token: this is `whatsapp_access_token`. Store it like a password.
+
+### 3.4 Get the App secret
+
+**App Dashboard → App settings → Basic → App secret → Show**. This is `whatsapp_app_secret`. CowAgent uses it to verify that every webhook really comes from Meta.
+
+### 3.5 Choose a verify token
+
+Pick any random string, for example from `openssl rand -hex 16`. This is `whatsapp_verify_token`. You enter the same value in Meta in §6.
+
+## 4. Set up your real number and WhatsApp Business profile (going live)
+
+Skip this section while testing with the test number.
+
+### 4.1 Add and register the phone number
+
+1. **App Dashboard → WhatsApp → API Setup → Add phone number**, or **WhatsApp Manager → Phone numbers → Add phone number**.
+2. Fill in the **Business profile** basics:
+   - **Display name**: the name users see. Meta reviews it against its display-name guidelines, and it should match your business or brand. An unrelated name, or a personal name for a non-personal brand, gets rejected.
+   - **Category** and optional description.
+3. Verify the number with the SMS or voice code.
+4. **Register** the number for Cloud API messaging. This can only be done through the API, so run this once:
+
+   ```bash
+   curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/register" \
+     -H "Authorization: Bearer <ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"messaging_product": "whatsapp", "pin": "123456"}'
+   ```
+
+   `pin` becomes the number's 6-digit two-step verification PIN. If two-step verification is already on, use the existing PIN. Expect `{"success": true}`.
+5. Use this number's **Phone number ID** as `whatsapp_phone_number_id`.
+
+### 4.2 Complete the Business profile
+
+In **WhatsApp Manager → Phone numbers → (your number) → Profile**, set the profile picture, **About** (max 139 chars), **Description** (max 512), address, email, websites (max 2) and category. You can also do it through the API:
+
+```bash
+curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/whatsapp_business_profile" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
+  -d '{"messaging_product":"whatsapp","about":"AI assistant","description":"We answer questions 24/7","email":"support@example.com","websites":["https://example.com"],"vertical":"PROF_SERVICES"}'
+```
+
+### 4.3 Business verification and limits
+
+- Complete **Business verification** (Business Settings → Security Center). Without it, new numbers start with low messaging limits.
+- Watch the number's **quality rating** in WhatsApp Manager. Users blocking or reporting you lowers it, and that is what leads to restrictions.
+- **Groups** (§8) additionally require an **Official Business Account (OBA)**, the green badge, which you apply for in WhatsApp Manager.
+
+## 5. Expose the webhook over HTTPS
+
+CowAgent listens on `http://0.0.0.0:9893/whatsapp/webhook` (`whatsapp_port`). Meta needs a public **HTTPS** URL that forwards to it.
+
+<Tabs>
+  <Tab title="Testing: Cloudflare Tunnel">
+    ```bash
+    cloudflared tunnel --url http://localhost:9893
+    # prints https://<random>.trycloudflare.com
+    ```
+    Callback URL: `https://<random>.trycloudflare.com/whatsapp/webhook`. The URL changes on every run, so update it in Meta each time.
+  </Tab>
+  <Tab title="Testing: ngrok">
+    ```bash
+    ngrok http 9893
+    ```
+    Callback URL: `https://<id>.ngrok-free.app/whatsapp/webhook`
+  </Tab>
+  <Tab title="Production: Nginx">
+    ```nginx
+    server {
+        listen 443 ssl;
+        server_name bot.example.com;
+        # certificates, e.g. from Let's Encrypt (certbot)
+        ssl_certificate     /etc/letsencrypt/live/bot.example.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/bot.example.com/privkey.pem;
+
+        location /whatsapp/webhook {
+            proxy_pass http://127.0.0.1:9893;
+            proxy_set_header Host $host;
+        }
+    }
+    ```
+    Callback URL: `https://bot.example.com/whatsapp/webhook`
+  </Tab>
+</Tabs>
+
+## 6. Configure CowAgent and connect the webhook
+
+### 6.1 Configure CowAgent
+
+<Tabs>
+  <Tab title="Install Script">
+    Run `./run.sh` (on Windows, `scripts/run.ps1`), choose **WhatsApp** in the channel menu, and enter the Phone Number ID, Access Token, App Secret, Verify Token and port (press Enter for the default 9893). The script writes them to `config.json`.
+  </Tab>
+  <Tab title="Web Console">
+    Open the Web Console → **Channels** → **Add Channel** → **WhatsApp**. Fill in Phone Number ID, Access Token, App Secret, Verify Token and Port, then connect.
+  </Tab>
+  <Tab title="Config File">
+    ```json
+    {
+      "channel_type": "whatsapp",
+      "whatsapp_phone_number_id": "123456789012345",
+      "whatsapp_access_token": "EAAG...",
+      "whatsapp_app_secret": "your-app-secret",
+      "whatsapp_verify_token": "your-random-verify-token",
+      "whatsapp_port": 9893
+    }
+    ```
+  </Tab>
+  <Tab title="Environment Variables">
+    To keep secrets out of `config.json`, set them as environment variables (upper-case config key):
+    ```bash
+    export WHATSAPP_ACCESS_TOKEN="EAAG..."
+    export WHATSAPP_APP_SECRET="your-app-secret"
+    export WHATSAPP_VERIFY_TOKEN="your-random-verify-token"
+    ```
+  </Tab>
+</Tabs>
+
+Start CowAgent. A successful start logs:
+
+```
+[WhatsApp] ✅ webhook listening on http://0.0.0.0:9893/whatsapp/webhook (phone_number_id=...)
+```
+
+If a required key is missing or the port is taken, startup fails with `[WhatsApp] missing required config: ...` or `[WhatsApp] startup failed: ...`.
+
+### 6.2 Connect the webhook in Meta
+
+CowAgent must be running, because Meta calls it during this step.
+
+1. **App Dashboard → WhatsApp → Configuration → Webhook → Edit**.
+2. **Callback URL**: `https://<your-domain>/whatsapp/webhook`
+3. **Verify token**: exactly your `whatsapp_verify_token`.
+4. Click **Verify and save**. Meta sends a GET handshake, and CowAgent answers with the challenge.
+5. Under **Webhook fields → Manage**, subscribe to **messages**. If you will use groups, also subscribe to `group_lifecycle_update`, `group_participants_update` and `group_settings_update`.
+
+For a real number (§4), make sure your app is subscribed to its WABA. If no webhooks arrive, run:
+
+```bash
+curl -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+## 7. Configuration reference
+
+| Key | Description | Default |
+| --- | --- | --- |
+| `whatsapp_phone_number_id` | Phone number ID of the business number | - |
+| `whatsapp_access_token` | System User access token | - |
+| `whatsapp_app_secret` | App secret, used to verify webhook signatures | - |
+| `whatsapp_verify_token` | Must equal the Verify token set on the webhook | - |
+| `whatsapp_port` | Local webhook port (path `/whatsapp/webhook`) | `9893` |
+| `whatsapp_api_version` | Graph API version | `v21.0` |
+| `whatsapp_group_trigger` | Groups: `all` (answer every message) / `prefix` (only messages starting with `group_chat_prefix`, e.g. `@bot`) | `all` |
+| `whatsapp_rate_limit_mps` | Outbound messages per second for the whole number (Meta's max is 80) | `20` |
+| `whatsapp_pair_interval_seconds` | Per-recipient pacing: one message per N seconds on average | `6` |
+| `whatsapp_pair_burst` | Messages a recipient may receive back-to-back before pacing applies | `5` |
+| `whatsapp_max_wait_seconds` | Longest a single send waits for the rate limiter before it is abandoned | `120` |
+
+## 8. Day-to-day operation
+
+### Private chat
+
+Message the business number from WhatsApp, and the Agent replies. Supported:
+
+| You send | What happens |
+|---|---|
+| Text | Answered directly. Long answers are split into several messages (4096-char limit). |
+| Image / document / video **with a caption** | Handled as one request ("summarize this" plus the file). |
+| Image / document / video **without a caption** | Kept, then attached to your **next** text message, so send the file and then ask your question. |
+| Voice note | Transcribed (needs a speech-to-text provider configured in CowAgent), then answered. |
+| Sticker, location, reaction, contact | Ignored. |
+
+The Agent can reply with text, images (jpeg/png), documents (pdf, Office, text-like files such as `.md`/`.csv`/`.json`), video (mp4) and audio (mp3/ogg/aac/amr). A file in a type WhatsApp doesn't accept (GIF, ZIP, WAV, …) is not sent; you get a short notice naming it instead.
+
+Chat commands work as on other channels, for example `/cancel` to stop a running task.
+
+### The 24-hour rule
+
+WhatsApp only allows free-form business messages **within 24 hours of the user's last message**. After that, Meta rejects sends with error `131047`, and CowAgent logs:
+
+```
+[WhatsApp] The 24-hour customer service window is closed (131047) ...
+```
+
+Messages that need a pre-approved template are out of scope for this channel. In practice, the Agent can always answer a user who has just written, but **scheduled or proactive messages only reach users who wrote within the last 24 h**.
+
+### Groups
+
+Ask the Agent in plain language, and it uses its `whatsapp_group` tool:
+
+| Say to the Agent | Tool action |
+|---|---|
+| "Create a WhatsApp group called *Launch crew* that needs my approval to join" | `create` (`join_approval_mode=approval_required`) |
+| "List my WhatsApp groups" | `list` |
+| "Show details and members of group X" | `info` |
+| "Rename group X to …" / "set its description to …" | `update` |
+| "Give me the invite link for group X" / "revoke the old link" | `get_invite_link` / `reset_invite_link` |
+| "Who is waiting to join group X?" / "approve them" / "reject …" | `list_join_requests` / `approve_join_requests` / `reject_join_requests` |
+| "Remove +1555… from group X" | `remove_participants` |
+| "Delete group X" | `delete` |
+
+How it works:
+
+- People **cannot be added directly**. Share the invite link and they join through it, or request to join if approval is required.
+- After `create`, Meta sends the group id and invite link asynchronously (you'll see `[WhatsApp] group event group_lifecycle_update: groups=[...]` in the log). If the Agent doesn't get an id back, ask it to list the groups.
+- Once the business is in the group, messages there are answered in the group. With `whatsapp_group_trigger: "prefix"` the Agent only answers messages starting with `group_chat_prefix` (e.g. `@bot what's next?`).
+- To send to a group proactively (e.g. from a scheduled task), use the receiver `group:<group_id>`.
+
+### Rate limiting (anti-ban)
+
+Every outgoing message waits for two token buckets:
+
+1. **Whole number**: `whatsapp_rate_limit_mps` per second.
+2. **Per recipient** (user or group): a burst of `whatsapp_pair_burst`, then one message per `whatsapp_pair_interval_seconds`. This follows Meta's pair rate limit of about one message per 6 s to the same user.
+
+Messages are delayed, never dropped. If Meta still throttles (`130429` throughput, `131056` pair rate, `80007` account rate), the send is retried with exponential backoff, at most 3 attempts. After a `131056`, that recipient's bucket is drained, so the retry waits a full interval. `131048` (spam rate limit) and `131047` (window closed) are **never retried**, because retrying them makes the quality rating worse.
+
+<Warning>
+  Rate limiting keeps you within Meta's published limits, but restrictions are mostly driven by the number's **quality rating**: people blocking or reporting you. Only message people who expect to hear from you, and don't use the number for unsolicited bulk messages.
+</Warning>
+
+## 9. Platform limitations
+
+- **24-hour window** for free-form messages (above). Template messages are not supported by this channel.
+- **Groups API**: Official Business Accounts only. At most **8 participants** per group. Join only through the invite link. Not available for numbers that also run the WhatsApp Business *app* (coexistence).
+- **One WhatsApp channel per CowAgent process**, because the webhook port is global.
+- Once registered to the Cloud API, the number can no longer be used in the personal WhatsApp app.
+
+## 10. Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Meta says "The callback URL or verify token couldn't be validated" | CowAgent isn't running or isn't reachable at the URL, the path isn't exactly `/whatsapp/webhook`, or the verify token differs. Check with `curl "https://<url>/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=<token>&hub.challenge=42"`, which should print `42`. |
+| Log: `webhook rejected: bad or missing X-Hub-Signature-256` | `whatsapp_app_secret` is wrong (copy it again from App settings → Basic), or something other than Meta is calling the URL. |
+| Webhook verified, but messages never arrive | **messages** isn't subscribed under Webhook fields; for a real number, the app isn't subscribed to the WABA (`/subscribed_apps`, §6.2); or the test recipient isn't on the allowed list. |
+| Log: `signed webhook payload rejected` | The payload isn't a WhatsApp webhook (e.g. another product's events). It's harmless and acknowledged. |
+| Bot receives messages but replies fail with `190` / `401` | The token has expired or lacks permissions. Use a System User token (§3.3). |
+| `131047` in the log | The 24-hour window is closed. The user must message first. |
+| `131048` in the log | Meta flagged spam-like sending. Slow down and review content; repeated hits can restrict the number. |
+| `130429` / `131056` warnings | Throttling, retried automatically. If frequent, lower `whatsapp_rate_limit_mps` or raise `whatsapp_pair_interval_seconds`. |
+| Group tool returns an eligibility error | The number isn't an Official Business Account, or it's a coexistence (Business app) number. |
+| Group tool not offered to the Agent | The WhatsApp channel isn't running. The tool only appears while it is. |
+| `startup failed: ... address already in use` | Another process uses `whatsapp_port`. Change the port, and update your proxy or tunnel. |

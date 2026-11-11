@@ -97,6 +97,10 @@ def _build_channel(channel_type, multi_instance) -> Channel:
     elif channel_type == const.DISCORD:
         from channel.discord.discord_channel import DiscordChannel
         ch = _fresh(DiscordChannel) if multi_instance else DiscordChannel()
+    elif channel_type == const.WHATSAPP:
+        # Single-instance: its webhook port is global config, like wechat_kf.
+        from channel.whatsapp.whatsapp_channel import WhatsAppChannel
+        ch = WhatsAppChannel()
     elif channel_type in (const.WEIXIN, "wx"):
         from channel.weixin.weixin_channel import WeixinChannel
         ch = _fresh(WeixinChannel) if multi_instance else WeixinChannel()

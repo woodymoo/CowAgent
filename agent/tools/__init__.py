@@ -12,6 +12,7 @@ from agent.tools.send.send import Send
 from agent.tools.search_files.search_files import SearchFiles
 
 from agent.tools.current_time.current_time import TimeTool
+from agent.tools.whatsapp_group.whatsapp_group import WhatsAppGroupTool
 
 # Import memory tools
 from agent.tools.memory.memory_search import MemorySearchTool
@@ -167,6 +168,7 @@ __all__ = [
     'BrowserTool',
     'McpTool',
     'TimeTool',
+    'WhatsAppGroupTool',
 ]
 
 """

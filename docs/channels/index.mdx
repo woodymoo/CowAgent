@@ -1,6 +1,6 @@
 ---
 title: Channels Overview
-description: "All channels CowAgent supports, with a matrix comparing image, file, voice and group chat support across WeChat, Feishu, DingTalk, WeCom, QQ, Telegram, Slack, Discord and the web console."
+description: "All channels CowAgent supports, with a matrix comparing image, file, voice and group chat support across WeChat, Feishu, DingTalk, WeCom, QQ, Telegram, Slack, Discord, WhatsApp and the web console."
 ---
 
 CowAgent supports multiple chat channels. Switch between them at startup via `channel_type`. The Web Console is enabled by default and can run in parallel with other channels.
@@ -23,6 +23,7 @@ The table below summarizes the inbound message types, bot reply types, and group
 | [Telegram](/channels/telegram) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Slack](/channels/slack) | ✅ | ✅ | ✅ | | ✅ |
 | [Discord](/channels/discord) | ✅ | ✅ | ✅ | | ✅ |
+| [WhatsApp](/channels/whatsapp) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 - The **Image / File / Voice** columns indicate that the channel can send and receive the corresponding message types; see each channel's docs for details
 - The **Group Chat** column indicates the ability to recognize and respond to group messages
@@ -44,3 +45,4 @@ The table below summarizes the inbound message types, bot reply types, and group
 - [Telegram](/channels/telegram) — global IM, 5-minute setup, no public IP needed
 - [Slack](/channels/slack) — team collaboration IM, Socket Mode integration, no public IP needed
 - [Discord](/channels/discord) — community IM, Gateway connection, no public IP needed
+- [WhatsApp](/channels/whatsapp) — official Meta WhatsApp Business Cloud API, needs a public HTTPS webhook
